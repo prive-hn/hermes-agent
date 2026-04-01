@@ -2749,6 +2749,102 @@ class TestBuildApiKwargsAnthropicMaxTokens:
         assert "Return valid JSON." not in str(captured["system"])
         assert "Return valid JSON." in str(captured["messages"][-1]["content"])
 
+    def test_oauth_anthropic_passes_request_level_cache_control(self, agent):
+        """OAuth tokens (Bearer auth) must also get request-level cache_control."""
+        agent.api_mode = "anthropic_messages"
+        agent.provider = "anthropic"
+        agent.base_url = "https://api.anthropic.com"
+        agent._use_native_anthropic_auto_cache = True
+        agent._is_anthropic_oauth = True
+        agent.reasoning_config = None
+
+        with patch("agent.anthropic_adapter.build_anthropic_kwargs") as mock_build:
+            mock_build.return_value = {"model": "claude-sonnet-4-6", "messages": [], "max_tokens": 4096}
+            agent._build_api_kwargs([{"role": "user", "content": "test"}])
+            _, kwargs = mock_build.call_args
+            assert kwargs["request_cache_control"] == {"type": "ephemeral"}
+            assert kwargs["is_oauth"] is True
+
+    def test_oauth_run_conversation_caching_and_ephemeral_prompt(self, agent):
+        """Full OAuth flow: cache_control, ephemeral prompt in user msg, OAuth transforms."""
+        captured = {}
+
+        def _fake_api_call(api_kwargs):
+            captured.update(api_kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="done")],
+                stop_reason="end_turn",
+                usage=None,
+            )
+
+        agent.api_mode = "anthropic_messages"
+        agent.provider = "anthropic"
+        agent.base_url = "https://api.anthropic.com"
+        agent._base_url_lower = "https://api.anthropic.com"
+        agent._use_prompt_caching = True
+        agent._use_native_anthropic_auto_cache = True
+        agent._is_anthropic_oauth = True
+        agent.ephemeral_system_prompt = "Use bullet points."
+        agent.reasoning_config = None
+
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+            patch.object(agent, "_queue_honcho_prefetch"),
+            patch.object(agent, "_interruptible_api_call", side_effect=_fake_api_call),
+        ):
+            result = agent.run_conversation("list items")
+
+        assert result["completed"] is True
+        # Request-level cache control present
+        assert captured["cache_control"] == {"type": "ephemeral"}
+        # Ephemeral prompt moved to user message, not in system
+        assert "Use bullet points." not in str(captured["system"])
+        assert "Use bullet points." in str(captured["messages"][-1]["content"])
+        # OAuth transforms applied (system has Claude Code prefix)
+        system_text = str(captured["system"])
+        assert "Claude Code" in system_text
+
+    def test_api_key_anthropic_no_oauth_transforms(self, agent):
+        """API key path: cache_control present, but no OAuth identity prefix."""
+        captured = {}
+
+        def _fake_api_call(api_kwargs):
+            captured.update(api_kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="done")],
+                stop_reason="end_turn",
+                usage=None,
+            )
+
+        agent.api_mode = "anthropic_messages"
+        agent.provider = "anthropic"
+        agent.base_url = "https://api.anthropic.com"
+        agent._base_url_lower = "https://api.anthropic.com"
+        agent._use_prompt_caching = True
+        agent._use_native_anthropic_auto_cache = True
+        agent._is_anthropic_oauth = False
+        agent.ephemeral_system_prompt = "Be concise."
+        agent.reasoning_config = None
+
+        with (
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+            patch.object(agent, "_queue_honcho_prefetch"),
+            patch.object(agent, "_interruptible_api_call", side_effect=_fake_api_call),
+        ):
+            result = agent.run_conversation("summarize")
+
+        assert result["completed"] is True
+        assert captured["cache_control"] == {"type": "ephemeral"}
+        assert "Be concise." not in str(captured["system"])
+        assert "Be concise." in str(captured["messages"][-1]["content"])
+        # No OAuth transforms — no Claude Code prefix
+        system_text = str(captured["system"])
+        assert "Claude Code" not in system_text
+
 
 class TestAnthropicImageFallback:
     def test_build_api_kwargs_converts_multimodal_user_image_to_text(self, agent):

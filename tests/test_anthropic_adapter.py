@@ -1041,6 +1041,37 @@ class TestBuildAnthropicKwargs:
         )
         assert kwargs["cache_control"] == {"type": "ephemeral"}
 
+    def test_request_cache_control_works_with_oauth(self):
+        """OAuth transforms and request-level cache_control must coexist."""
+        kwargs = build_anthropic_kwargs(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "Hi"}],
+            tools=[{"type": "function", "function": {"name": "test_tool", "parameters": {}}}],
+            max_tokens=4096,
+            reasoning_config=None,
+            is_oauth=True,
+            request_cache_control={"type": "ephemeral"},
+        )
+        # Cache control should be present
+        assert kwargs["cache_control"] == {"type": "ephemeral"}
+        # OAuth transforms should also be applied
+        assert any(t["name"].startswith("mcp_") for t in kwargs["tools"])
+        # System should have Claude Code prefix
+        system_text = str(kwargs["system"])
+        assert "Claude Code" in system_text
+
+    def test_request_cache_control_absent_when_none(self):
+        """cache_control key should not appear when request_cache_control is None."""
+        kwargs = build_anthropic_kwargs(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "Hi"}],
+            tools=None,
+            max_tokens=4096,
+            reasoning_config=None,
+            request_cache_control=None,
+        )
+        assert "cache_control" not in kwargs
+
     def test_explicit_max_tokens_overrides_default(self):
         """User-specified max_tokens should be respected."""
         kwargs = build_anthropic_kwargs(
