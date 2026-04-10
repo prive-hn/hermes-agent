@@ -17,7 +17,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from agent.auxiliary_client import call_llm
+from agent.auxiliary_client import call_llm, extract_content_or_reasoning
 from agent.model_metadata import (
     get_model_context_length,
     estimate_messages_tokens_rough,
@@ -379,14 +379,14 @@ Write only the summary body. Do not include any preamble or prefix."""
             call_kwargs = {
                 "task": "compression",
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": summary_budget * 2,
+                "max_tokens": summary_budget * 4,  # 4x headroom for reasoning models (GLM, DeepSeek, etc.)
                 # timeout resolved from auxiliary.compression.timeout config by call_llm
             }
             if self.summary_model:
                 call_kwargs["model"] = self.summary_model
             response = call_llm(**call_kwargs)
-            content = response.choices[0].message.content
-            # Handle cases where content is not a string (e.g., dict from llama.cpp)
+            content = extract_content_or_reasoning(response)
+            # Handle cases where content is not a string (e.g. dict from llama.cpp)
             if not isinstance(content, str):
                 content = str(content) if content else ""
             summary = content.strip()

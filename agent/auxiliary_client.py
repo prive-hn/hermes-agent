@@ -1048,6 +1048,22 @@ def _is_connection_error(exc: Exception) -> bool:
     return False
 
 
+def _is_auth_error(exc: Exception) -> bool:
+    """Detect authentication errors that warrant provider fallback.
+
+    Returns True for HTTP 401 errors (expired tokens, invalid keys).
+    These are often transient (token rotation) and should trigger a
+    fallback rather than silently destroying context.
+    """
+    status = getattr(exc, "status_code", None)
+    if status == 401:
+        return True
+    err_lower = str(exc).lower()
+    if any(kw in err_lower for kw in ("token expired", "incorrect", "unauthorized", "invalid api key", "authentication")):
+        return True
+    return False
+
+
 def _try_payment_fallback(
     failed_provider: str,
     task: str = None,
@@ -2097,9 +2113,9 @@ def call_llm(
         # Codex/OAuth tokens that authenticate but whose endpoint is down,
         # and providers the user never configured that got picked up by
         # the auto-detection chain.
-        should_fallback = _is_payment_error(first_err) or _is_connection_error(first_err)
+        should_fallback = _is_payment_error(first_err) or _is_connection_error(first_err) or _is_auth_error(first_err)
         if should_fallback:
-            reason = "payment error" if _is_payment_error(first_err) else "connection error"
+            reason = "payment error" if _is_payment_error(first_err) else "connection error" if _is_connection_error(first_err) else "auth error"
             logger.info("Auxiliary %s: %s on %s (%s), trying fallback",
                         task or "call", reason, resolved_provider, first_err)
             fb_client, fb_model, fb_label = _try_payment_fallback(
