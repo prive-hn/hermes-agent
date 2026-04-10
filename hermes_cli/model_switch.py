@@ -402,8 +402,8 @@ def switch_model(
         a. Try alias resolution on current provider
         b. If alias exists but not on current provider -> fallback
         c. On aggregator, try vendor/model slug conversion
-        d. Aggregator catalog search
-        e. detect_provider_for_model() as last resort
+        d. detect_provider_for_model() — direct providers before aggregator
+        e. Aggregator catalog search (fallback when no direct provider)
         f. Resolve credentials
         g. Normalize model name for target provider
 
@@ -562,7 +562,25 @@ def switch_model(
                             raw_input, new_model,
                         )
 
-        # --- Step d: Aggregator catalog search ---
+        # --- Step d: detect_provider_for_model() ---
+        # Check direct providers BEFORE aggregator catalog so that a
+        # native provider with credentials wins over OpenRouter.
+        _base = current_base_url or ""
+        is_custom = current_provider in ("custom", "local") or (
+            "localhost" in _base or "127.0.0.1" in _base
+        )
+
+        if (
+            target_provider == current_provider
+            and not is_custom
+            and not resolved_alias
+        ):
+            detected = detect_provider_for_model(new_model, current_provider)
+            if detected:
+                target_provider, new_model = detected
+
+        # --- Step e: Aggregator catalog search ---
+        # Only runs if detect didn't find a direct provider (still on aggregator).
         if is_aggregator(target_provider) and not resolved_alias:
             catalog = list_provider_models(target_provider)
             if catalog:
@@ -578,21 +596,6 @@ def switch_model(
                             if bare.lower() == new_model_lower:
                                 new_model = mid
                                 break
-
-        # --- Step e: detect_provider_for_model() as last resort ---
-        _base = current_base_url or ""
-        is_custom = current_provider in ("custom", "local") or (
-            "localhost" in _base or "127.0.0.1" in _base
-        )
-
-        if (
-            target_provider == current_provider
-            and not is_custom
-            and not resolved_alias
-        ):
-            detected = detect_provider_for_model(new_model, current_provider)
-            if detected:
-                target_provider, new_model = detected
 
     # =================================================================
     # COMMON PATH: Resolve credentials, normalize, get metadata

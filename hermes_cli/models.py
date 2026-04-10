@@ -123,6 +123,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gemma-4-26b-it",
     ],
     "zai": [
+        "glm-5.1",
         "glm-5",
         "glm-5-turbo",
         "glm-4.7",
@@ -915,6 +916,19 @@ def curated_models_for_provider(
     return [(m, "") for m in models]
 
 
+def _provider_has_credentials(provider_id: str) -> bool:
+    """Check whether any API key env var is set for *provider_id*."""
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+        import os
+        pconfig = PROVIDER_REGISTRY.get(provider_id)
+        if pconfig:
+            return any(os.getenv(ev, "").strip() for ev in pconfig.api_key_env_vars)
+    except Exception:
+        pass
+    return False
+
+
 def detect_provider_for_model(
     model_name: str,
     current_provider: str,
@@ -971,18 +985,7 @@ def detect_provider_for_model(
 
     if direct_match:
         # Check if we have credentials for this provider
-        has_creds = False
-        try:
-            from hermes_cli.auth import PROVIDER_REGISTRY
-            pconfig = PROVIDER_REGISTRY.get(direct_match)
-            if pconfig:
-                import os
-                for env_var in pconfig.api_key_env_vars:
-                    if os.getenv(env_var, "").strip():
-                        has_creds = True
-                        break
-        except Exception:
-            pass
+        has_creds = _provider_has_credentials(direct_match)
 
         if has_creds:
             return (direct_match, name)
@@ -994,6 +997,18 @@ def detect_provider_for_model(
         # Still return the direct provider — credential resolution will
         # give a clear error rather than silently using the wrong provider
         return (direct_match, name)
+
+    # --- Step 1.5: family prefix matching ---
+    # Handles new model versions not yet in the static catalog.
+    # E.g. glm-5.2 matches ZAI because ZAI has glm-5, glm-4.7, etc.
+    name_family = name_lower.split("-")[0]  # e.g. "glm" from "glm-5.1"
+    if name_family:
+        for pid, models in _PROVIDER_MODELS.items():
+            if pid == current_provider or pid in _AGGREGATORS:
+                continue
+            if any(m.lower().split("-")[0] == name_family for m in models):
+                if _provider_has_credentials(pid):
+                    return (pid, name)
 
     # --- Step 2: check OpenRouter catalog ---
     # First try exact match (handles provider/model format)
