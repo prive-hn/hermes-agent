@@ -409,3 +409,31 @@ def test_get_config_schema_minimal():
     assert len(schema) == 1
     assert schema[0]["key"] == "api_key"
     assert schema[0]["secret"] is True
+
+
+# -- Forget error handling tests ---------------------------------------------
+
+
+def test_forget_tool_returns_clear_error_on_not_found(provider, monkeypatch):
+    """404 from the API surfaces a human-readable error."""
+
+    def raise_not_found(memory_id, *, container_tag=None):
+        raise ValueError(f"Memory {memory_id} not found — it may have already been deleted.")
+
+    monkeypatch.setattr(provider._client, "forget_memory", raise_not_found)
+    result = json.loads(provider.handle_tool_call("supermemory_forget", {"id": "gone_id"}))
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+    assert "gone_id" in result["error"]
+
+
+def test_forget_tool_surfaces_other_errors(provider, monkeypatch):
+    """Non-404 errors are still surfaced as tool errors."""
+
+    def raise_auth(memory_id, *, container_tag=None):
+        raise PermissionError("Invalid API key")
+
+    monkeypatch.setattr(provider._client, "forget_memory", raise_auth)
+    result = json.loads(provider.handle_tool_call("supermemory_forget", {"id": "m1"}))
+    assert "error" in result
+    assert "Invalid API key" in result["error"]

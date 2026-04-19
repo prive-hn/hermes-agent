@@ -334,7 +334,13 @@ class _SupermemoryClient:
 
     def forget_memory(self, memory_id: str, *, container_tag: Optional[str] = None) -> None:
         tag = container_tag or self._container_tag
-        self._client.memories.forget(container_tag=tag, id=memory_id)
+        try:
+            self._client.memories.forget(container_tag=tag, id=memory_id)
+        except Exception as exc:
+            exc_name = type(exc).__name__
+            if "NotFound" in exc_name:
+                raise ValueError(f"Memory {memory_id} not found — it may have already been deleted.") from exc
+            raise
 
     def forget_by_query(self, query: str, *, container_tag: Optional[str] = None) -> dict:
         results = self.search_memories(query, limit=5, container_tag=container_tag)
